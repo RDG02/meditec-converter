@@ -90,7 +90,9 @@ def extract_rit_datum(file_content: str) -> str:
         if line.startswith('C;K') and last_row == 2 and last_col == 1:
             match = re.search(r'C;K"([^"]*)"', line)
             if match:
-                return match.group(1)
+                datum = match.group(1)
+                # Vervang punten door streepjes in datum
+                return datum.replace('.', '-')
     return ''
 
 def parse_slk_patients(file_content: str) -> pd.DataFrame:
