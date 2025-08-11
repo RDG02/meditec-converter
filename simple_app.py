@@ -71,7 +71,38 @@ TRANSLATIONS = {
 def clean_value(val):
     if pd.isna(val):
         return val
-    return ''.join(c for c in str(val) if unicodedata.category(c)[0] != 'C')
+    
+    # Converteer naar string
+    text = str(val)
+    
+    # Specifieke correcties voor bekende parsing fouten
+    # Deze patronen ontstaan door verkeerde parsing van het SLK bestand
+    corrections = {
+        'HNHarig': 'Härig',
+        'KNHubra': 'Kübra', 
+        'HNHoveler': 'Höveler',
+        'BINHuchenstraße': 'Blüchenstraße',
+        'HHarig': 'Härig',  # Voor het geval er dubbele H's zijn
+        'KKubra': 'Kübra',  # Voor het geval er dubbele K's zijn
+    }
+    
+    # Pas correcties toe
+    for wrong, correct in corrections.items():
+        text = text.replace(wrong, correct)
+    
+    # Verwijder controle karakters maar behoud printbare karakters
+    cleaned = ''.join(c for c in text if unicodedata.category(c)[0] != 'C')
+    
+    # Verwijder alleen de echt problematische karakters voor Excel
+    problematic_chars = ['\x00', '\x01', '\x02', '\x03', '\x04', '\x05', '\x06', '\x07', '\x08', 
+                        '\x0b', '\x0c', '\x0e', '\x0f', '\x10', '\x11', '\x12', '\x13', '\x14', 
+                        '\x15', '\x16', '\x17', '\x18', '\x19', '\x1a', '\x1b', '\x1c', '\x1d', 
+                        '\x1e', '\x1f']
+    
+    for char in problematic_chars:
+        cleaned = cleaned.replace(char, '')
+    
+    return cleaned
 
 def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     return df.applymap(clean_value)
@@ -110,10 +141,28 @@ def parse_slk_patients(file_content: str) -> pd.DataFrame:
             continue
         if line.startswith('C;K') and last_row is not None and last_col is not None:
             if last_row >= 4 and 2 <= last_col <= 14:
-                # Accepteer zowel C;K"waarde" als C;Kwaarde
-                match = re.search(r'C;K"([^"]*)"|C;K([^\"]+)$', line)
+                # Accepteer zowel C;K"waarde" als C;Kwaarde (voor postcodes etc.)
+                match = re.search(r'C;K"([^"]*)"', line)
+                if not match:
+                    # Probeer zonder quotes (voor numerieke waarden)
+                    match = re.search(r'C;K([0-9]+)$', line)
                 if match:
                     value = match.group(1) if match.group(1) is not None else match.group(2)
+                    
+                    # Direct correcties toepassen voor verkeerd geparsede umlauts
+                    umlaut_corrections = {
+                        'HNHarig': 'Härig',
+                        'KNHubra': 'Kübra', 
+                        'HNHoveler': 'Höveler',
+                        'BINHuchenstraße': 'Blüchenstraße',
+                        'HHarig': 'Härig',
+                        'KKubra': 'Kübra',
+                    }
+                    for wrong, correct in umlaut_corrections.items():
+                        if value == wrong:
+                            value = correct
+                            break
+                    
                     column_mapping = {
                         2: 'erster_termin',
                         3: 'letzter_termin',
@@ -156,11 +205,18 @@ def convert_to_custom_format(df: pd.DataFrame, rit_datum: str) -> pd.DataFrame:
         hoofd = parts[0] if len(parts) > 0 else ''
         tweede = parts[1] if len(parts) > 1 else ''
         return hoofd, tweede
+    
+    # Helper: format time by removing colons
+    def format_time(tijd):
+        if pd.isna(tijd) or tijd == '':
+            return ''
+        # Verwijder dubbele punten uit tijd (15:15 -> 1515)
+        return str(tijd).replace(':', '')
 
     columns = [
         'patient ID', 'leeg1', 'Name', 'vorname', 'leeg2', 'leeg3', 'strasse+nr', 'leeg4',
         'ort', 'PLZ', 'landcode', '1telefon', '2telefon', 'leeg5', 'leeg6',
-        'datum von farht', 'erster_termin', 'letze_termin'
+        'datum von farht', 'leeg7', 'erster_termin', 'letze_termin'
     ]
     output = []
     for _, row in df.iterrows():
@@ -183,8 +239,9 @@ def convert_to_custom_format(df: pd.DataFrame, rit_datum: str) -> pd.DataFrame:
             '',                       # 14 leeg
             '',                       # 15 leeg
             rit_datum,                # 16 datum der farht
-            row.get('erster_termin', ''), # 17 erster_termin
-            row.get('letzter_termin', '') # 18 letzter_terminimage.png
+            '',                       # 17 leeg
+            format_time(row.get('erster_termin', '')), # 18 erster_termin
+            format_time(row.get('letzter_termin', '')) # 19 letzter_termin
         ])
     df_out = pd.DataFrame(output, columns=columns)
     # Splits de kolom '1telefon' op komma's in meerdere kolommen
@@ -197,7 +254,7 @@ def convert_to_custom_format(df: pd.DataFrame, rit_datum: str) -> pd.DataFrame:
     gewenste_volgorde = [
         'patient ID', 'leeg1', 'Name', 'vorname', 'leeg2', 'leeg3', 'strasse+nr', 'leeg4',
         'ort', 'PLZ', 'landcode', '1telefon_1', '2telefon', 'leeg5', 'leeg6',
-        'datum von farht', 'erster_termin', 'letze_termin'
+        'datum von farht', 'leeg7', 'erster_termin', 'letze_termin'
     ]
     # Voeg extra telefoonkolommen toe achteraan als ze bestaan
     extra_telcols = [col for col in df_out.columns if col.startswith('1telefon_') and col != '1telefon_1']
@@ -299,7 +356,20 @@ def main():
     
     if uploaded_file is not None:
         # Read file content
-        file_content = uploaded_file.read().decode('utf-8', errors='ignore')
+        # Probeer verschillende encodings voor Duitse karakters
+        raw_content = uploaded_file.read()
+        encodings_to_try = ['utf-8', 'cp1252', 'iso-8859-1', 'windows-1252']
+        
+        file_content = None
+        for encoding in encodings_to_try:
+            try:
+                file_content = raw_content.decode(encoding)
+                break
+            except UnicodeDecodeError:
+                continue
+        
+        if file_content is None:
+            file_content = raw_content.decode('utf-8', errors='ignore')
         
         # Parse SLK file
         with st.spinner(t["processing"]):
@@ -332,6 +402,9 @@ def main():
                         routemeister_df = convert_to_custom_format(df, '') # Pass empty string for rit_datum
                     else:
                         routemeister_df = convert_to_custom_format(df, rit_datum)
+                    
+                    # Clean data to remove illegal characters
+                    routemeister_df = clean_dataframe(routemeister_df)
                 
                 if not routemeister_df.empty:
                     st.success(t["success"])
