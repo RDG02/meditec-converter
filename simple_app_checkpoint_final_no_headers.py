@@ -75,20 +75,6 @@ def clean_value(val):
     # Converteer naar string
     text = str(val)
     
-    # Fix encoding issues (UTF-8 bytes read as Latin-1) - EERST doen!
-    encoding_fixes = {
-        'Ã¤': 'ä',  # ä incorrectly encoded
-        'Ã¶': 'ö',  # ö incorrectly encoded  
-        'Ã¼': 'ü',  # ü incorrectly encoded
-        'ÃŸ': 'ss', # ß incorrectly encoded -> ss
-        'Ã„': 'Ä',  # Ä incorrectly encoded
-        'Ã–': 'Ö',  # Ö incorrectly encoded
-        'Ãœ': 'Ü',  # Ü incorrectly encoded
-    }
-    
-    for wrong_encoding, correct_char in encoding_fixes.items():
-        text = text.replace(wrong_encoding, correct_char)
-    
     # Vervang escape sequences + de volgende letter door de juiste umlaut
     # Deze worden nu al in de parser afgehandeld, maar als backup hier ook
     escape_replacements = {
@@ -115,15 +101,6 @@ def clean_value(val):
     
     # Extra conversie: ß naar ss als het nog in de tekst staat
     text = text.replace('ß', 'ss')
-    
-    # Vervang Duitse karakters door hun ASCII equivalenten (voor CSV compatibiliteit)
-    german_replacements = {
-        'ä': 'a', 'ö': 'o', 'ü': 'u',
-        'Ä': 'A', 'Ö': 'O', 'Ü': 'U',
-    }
-    
-    for german_char, ascii_char in german_replacements.items():
-        text = text.replace(german_char, ascii_char)
     
     # Verwijder controle karakters maar behoud printbare karakters
     cleaned = ''.join(c for c in text if unicodedata.category(c)[0] != 'C')
@@ -316,52 +293,27 @@ def convert_to_custom_format(df: pd.DataFrame, rit_datum: str) -> pd.DataFrame:
 
 def get_download_link(df: pd.DataFrame, filename: str, text: str):
     """Generate a download link for the DataFrame."""
+    from openpyxl import Workbook
     
-    # Check if CSV or Excel based on filename extension
-    if filename.endswith('.csv'):
-        # Generate CSV without headers
-        buffer = io.StringIO()
-        
-        # Write only data values, no headers
-        data_only = df.values.tolist()
-        for row_data in data_only:
-            # Convert values to string and handle None/NaN
-            row_str = []
-            for value in row_data:
-                if pd.isna(value) or value is None:
-                    row_str.append('')
-                else:
-                    row_str.append(str(value))
-            buffer.write(','.join(row_str) + '\n')
-        
-        buffer.seek(0)
-        b64 = base64.b64encode(buffer.getvalue().encode('utf-8')).decode()
-        href = f'<a href="data:text/csv;base64,{b64}" download="{filename}">{text}</a>'
-        
-    else:
-        # Generate Excel without headers (original code)
-        from openpyxl import Workbook
-        
-        buffer = io.BytesIO()
-        
-        # Maak direct een Excel workbook zonder pandas tussenkomst
-        wb = Workbook()
-        ws = wb.active
-        ws.title = 'Data'
-        
-        # Schrijf alleen de data waarden, geen headers
-        data_only = df.values.tolist()
-        for row_idx, row_data in enumerate(data_only, 1):  # Start bij rij 1 (niet 0)
-            for col_idx, value in enumerate(row_data, 1):   # Start bij kolom 1 (niet 0)
-                ws.cell(row=row_idx, column=col_idx, value=value)
-        
-        # Sla op naar buffer
-        wb.save(buffer)
-        buffer.seek(0)
-        
-        b64 = base64.b64encode(buffer.read()).decode()
-        href = f'<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}" download="{filename}">{text}</a>'
+    buffer = io.BytesIO()
     
+    # Maak direct een Excel workbook zonder pandas tussenkomst
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Data'
+    
+    # Schrijf alleen de data waarden, geen headers
+    data_only = df.values.tolist()
+    for row_idx, row_data in enumerate(data_only, 1):  # Start bij rij 1 (niet 0)
+        for col_idx, value in enumerate(row_data, 1):   # Start bij kolom 1 (niet 0)
+            ws.cell(row=row_idx, column=col_idx, value=value)
+    
+    # Sla op naar buffer
+    wb.save(buffer)
+    buffer.seek(0)
+    
+    b64 = base64.b64encode(buffer.read()).decode()
+    href = f'<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}" download="{filename}">{text}</a>'
     return href
 
 def has_special_chars(val):
@@ -490,107 +442,18 @@ def main():
                     else:
                         routemeister_df = convert_to_custom_format(df, rit_datum)
                     
-                    # Keep original data for CSV export (before cleaning)
-                    original_routemeister_df = routemeister_df.copy()
-                    
-                    # Clean data to remove illegal characters (only for display)
+                    # Clean data to remove illegal characters
                     routemeister_df = clean_dataframe(routemeister_df)
                 
                 if not routemeister_df.empty:
                     st.success(t["success"])
                     st.dataframe(routemeister_df.head(10).reset_index(drop=True), use_container_width=True, hide_index=True)
                     
-                    # Fixed CSV download button (always visible and large)
-                    # Use ORIGINAL data (same as small hover button) with escape sequence fixes
-                    def fix_escape_sequences(val):
-                        if pd.isna(val) or val is None:
-                            return val
-                        text = str(val)
-                        
-                        # Same escape replacements as in parser
-                        escape_replacements = {
-                            '\x1bNHa': 'ä',  # \x1bNH + a = ä
-                            '\x1bNHo': 'ö',  # \x1bNH + o = ö 
-                            '\x1bNHu': 'ü',  # \x1bNH + u = ü 
-                            '\x1bNHr': 'ür', # \x1bNH + r = ür (voor "für")
-                            '\x1bNOo': 'ö',  # \x1bNO + o = ö
-                            '\x1bNUu': 'ü',  # \x1bNU + u = ü
-                            '\x1bNSs': 'ss', # \x1bNS + s = ss (ß wordt ss)
-                            '\x1bN{e': 'ße', # \x1bN{ + e = ße (ß escape sequence)
-                            '\x1bNUb': 'üb', # \x1bNU + b = üb 
-                            '\x1bNUc': 'üc', # \x1bNU + c = üc 
-                        }
-                        
-                        for escape_seq, replacement in escape_replacements.items():
-                            if escape_seq in text:
-                                text = text.replace(escape_seq, replacement)
-                        
-                        # Remove remaining escape sequences
-                        text = re.sub(r'\x1b[A-Z]{2,}[a-z{]?', '', text)
-                        
-                        # Convert ß to ss
-                        text = text.replace('ß', 'ss')
-                        
-                        return text
-                    
-                    # Apply escape sequence fixes to original data (same as small button)
-                    csv_df = original_routemeister_df.applymap(fix_escape_sequences)
-                    
-                    csv_buffer = io.StringIO()
-                    csv_df.to_csv(csv_buffer, index=False, header=False, encoding='utf-8')
-                    csv_data = csv_buffer.getvalue()
-                    
-                    # Create filename with date
-                    if rit_datum:
-                        date_parts = rit_datum.split('-')
-                        if len(date_parts) == 3:
-                            date_str = f"{date_parts[0]}{date_parts[1]}{date_parts[2]}"
-                            download_filename = f"routemeister_{date_str}.csv"
-                        else:
-                            download_filename = "routemeister.csv"
-                    else:
-                        download_filename = "routemeister.csv"
-                    
-                    # Make the button even more prominent
-                    st.markdown("---")  # Add separator line
-                    
-                    # Create columns to center and make button larger
-                    col1, col2, col3 = st.columns([1, 2, 1])
-                    with col2:
-                        # Prepare CSV data for download (with correct umlauts, no headers)
-                        # Apply escape sequence fixes to the download data
-                        def fix_escape_sequences(df):
-                            df_fixed = df.copy()
-                            for col in df_fixed.columns:
-                                df_fixed[col] = df_fixed[col].apply(lambda x: clean_value(x) if pd.notna(x) else x)
-                            return df_fixed
-                        
-                        download_df = fix_escape_sequences(original_routemeister_df)
-                        
-                        csv_buffer = io.StringIO()
-                        download_df.to_csv(
-                            csv_buffer, 
-                            index=False, 
-                            header=False, 
-                            encoding='utf-8',
-                            sep=';',  # Gebruik puntkomma als separator (beter voor Excel)
-                            quoting=1,  # Quote alleen als nodig
-                            lineterminator='\r\n'  # Windows line endings
-                        )
-                        csv_data = csv_buffer.getvalue()
-                        
-                        # Large, prominent download button
-                        st.download_button(
-                            label="📥 DOWNLOAD CSV",
-                            data=csv_data.encode('utf-8'),
-                            file_name=download_filename,
-                            mime="text/csv",
-                            key="large_csv_download",
-                            help="Download de geconverteerde data als CSV bestand",
-                            use_container_width=True
-                        )
-                    
-                    st.markdown("---")  # Add separator line
+                    # Download button
+                    st.subheader(t["download"])
+                    download_filename = f"converted_no_headers_{uploaded_file.name.replace('.slk', '.xlsx')}"
+                    download_link = get_download_link(routemeister_df, download_filename, t["download"])
+                    st.markdown(download_link, unsafe_allow_html=True)
                     
                     # Show conversion summary
                     st.subheader("📈 Conversie Samenvatting")

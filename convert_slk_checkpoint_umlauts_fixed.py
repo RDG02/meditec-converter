@@ -226,20 +226,7 @@ def main():
         sample_df = convert_to_sample_format(df, rit_datum)
         sample_df = clean_dataframe(sample_df)
         print(f"💾 Excel bestand wordt opgeslagen: {output_file}")
-        # Export zonder headers - gebruik openpyxl direct
-        from openpyxl import Workbook
-        
-        wb = Workbook()
-        ws = wb.active
-        ws.title = 'Data'
-        
-        # Schrijf alleen de data waarden, geen headers
-        data_only = sample_df.values.tolist()
-        for row_idx, row_data in enumerate(data_only, 1):  # Start bij rij 1
-            for col_idx, value in enumerate(row_data, 1):   # Start bij kolom 1
-                ws.cell(row=row_idx, column=col_idx, value=value)
-        
-        wb.save(output_file)
+        sample_df.to_excel(output_file, index=False)
         print("✅ Conversie voltooid!")
         print(f"📈 Samenvatting:")
         print(f"   • Patiënten: {len(df)}")
