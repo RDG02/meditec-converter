@@ -254,12 +254,16 @@ def convert_to_custom_format(df: pd.DataFrame, rit_datum: str) -> pd.DataFrame:
         tweede = parts[1] if len(parts) > 1 else ''
         return hoofd, tweede
     
-    # Helper: format time by removing colons
+    # Helper: format time by removing colons and leading zeros
     def format_time(tijd):
         if pd.isna(tijd) or tijd == '':
             return ''
-        # Verwijder dubbele punten uit tijd (15:15 -> 1515)
-        return str(tijd).replace(':', '')
+        # Verwijder dubbele punten uit tijd en leading zeros
+        tijd_str = str(tijd).replace(':', '')
+        # Verwijder leading zero als het een 4-cijferige tijd is (0700 -> 700)
+        if len(tijd_str) == 4 and tijd_str.startswith('0'):
+            tijd_str = tijd_str[1:]
+        return tijd_str
 
     columns = [
         'patient ID', 'leeg1', 'Name', 'vorname', 'leeg2', 'leeg3', 'strasse+nr', 'leeg4',

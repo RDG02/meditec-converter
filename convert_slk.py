@@ -164,12 +164,16 @@ def parse_slk_patients(file_path: str) -> pd.DataFrame:
     return pd.DataFrame(patients)
 
 def convert_to_sample_format(df: pd.DataFrame, rit_datum: str) -> pd.DataFrame:
-    # Helper: format time by removing colons
+    # Helper: format time by removing colons and leading zeros
     def format_time(tijd):
         if pd.isna(tijd) or tijd == '':
             return ''
-        # Verwijder dubbele punten uit tijd (15:15 -> 1515)
-        return str(tijd).replace(':', '')
+        # Verwijder dubbele punten uit tijd en leading zeros
+        tijd_str = str(tijd).replace(':', '')
+        # Verwijder leading zero als het een 4-cijferige tijd is (0700 -> 700)
+        if len(tijd_str) == 4 and tijd_str.startswith('0'):
+            tijd_str = tijd_str[1:]
+        return tijd_str
     
     columns = [
         'PT18007598', 'TS-RV-AHB', 'Mevilzen', 'Hansel', 'M', '07.07.1985', 'Alst 6', 'Unnamed: 7',
